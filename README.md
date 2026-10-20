@@ -1,84 +1,70 @@
-Autonomous Text-to-SQL Query Agent
+# Autonomous Text-to-SQL Query Agent
 
 An autonomous, self-healing Text-to-SQL agent built with Django REST Framework that translates unstructured English queries into executable MySQL commands.
 
 This project goes beyond basic prompt engineering by implementing an Agentic Self-Correction Loop and a Multi-Layer Security Gateway, allowing users to safely query any relational database using natural language without being tied to fixed schemas.
 
-🚀 Key Features
+## Key Features
 
-Dynamic Schema Grounding: Automatically extracts live table blueprints and schema metadata on-the-fly. This decouples the agent from fixed schemas, allowing plug-and-play connections to any external relational database.
+- **Dynamic Schema Grounding:** Automatically extracts live table blueprints and schema metadata on-the-fly.
+- **Multi-Turn Agentic Self-Correction Loop:** Generate → Execute → Observe → Repair. Runtime MySQL errors are fed back to Llama 3.3 for automated query refinement.
+- **Multi-Layer Query Safety Gateway:** `sqlparse` AST validation blocks destructive DDL/DML, and queries run with dedicated read-only credentials.
+- **RESTful API Interface:** Django REST Framework endpoints for frontend and dashboard integration.
 
-Multi-Turn Agentic Self-Correction Loop: Implements a robust Generate → Execute → Observe → Repair cycle. If a generated SQL query throws an execution exception, the runtime error trace is intercepted and fed back to the LLM (Llama 3.3) for automated query refinement.
+## Technology Stack
 
-Multi-Layer Query Safety Gateway: Ensures absolute database safety by combining:
+- Backend: Python, Django, Django REST Framework
+- Database: MySQL (target), SQLite (Django internals)
+- LLM: Groq API (Llama 3.3)
+- SQL Parsing & Security: sqlparse
+- Environment: python-dotenv
 
-AST Validation: Uses sqlparse to analyze the Abstract Syntax Tree of the generated SQL, sanitizing prompts and systematically blocking destructive DDL/DML mutations (e.g., DROP, DELETE, UPDATE, INSERT).
+## Architecture & Workflow
 
-Role-Based Access Control: Executes all queries using dedicated read-only database credentials.
+1. **Input:** User submits a natural language question via `POST /api/query/`.
+2. **Introspection:** The agent connects to the target MySQL database and extracts the current schema.
+3. **Generation:** Groq (Llama 3.3) generates an initial SQL query.
+4. **Validation:** The sqlparse gateway inspects the AST and blocks destructive operations.
+5. **Execution & Observation:** The query is executed with read-only credentials.
+6. **Repair:** If execution fails, the MySQL error is sent back to the LLM. Repeats until success or max retries.
+7. **Response:** JSON rows are returned to the caller.
 
-RESTful API Interface: Fully accessible via standard HTTP requests managed by Django REST Framework, making it easy to integrate into frontend applications or enterprise dashboards.
+## Installation & Setup
 
-🛠️ Technology Stack
+### Prerequisites
 
-Backend: Python, Django, Django REST Framework (DRF)
+- Python 3.9+
+- MySQL Server
+- Groq API Key
 
-Database: MySQL
+### 1. Clone and enter the project
 
-LLM Integration: Groq API (powered by Llama 3.3)
-
-SQL Parsing & Security: sqlparse
-
-Environment Management: python-dotenv
-
-Version Control: Git
-
-🏗️ Architecture & Workflow
-
-Input: User submits a natural language question via the REST API.
-
-Introspection: The agent dynamically connects to the target MySQL database and extracts the current schema blueprint.
-
-Generation: The Groq API (Llama 3.3) generates an initial SQL query based on the prompt and live schema.
-
-Validation: The sqlparse gateway inspects the AST to ensure no destructive operations exist.
-
-Execution & Observation: The query is executed using read-only credentials.
-
-Repair (Self-Correction): If execution fails, the exact MySQL error trace is captured and sent back to the LLM to rewrite the query. This repeats until successful execution or a max-retry limit is reached.
-
-Response: The final JSON data payload is returned to the user.
-
-⚙️ Installation & Setup
-
-Prerequisites
-
-Python 3.9+
-
-MySQL Server
-
-Groq API Key
-
-1. Clone the repository
-
+```bash
 git clone https://github.com/yourusername/autonomous-text-to-sql-agent.git
 cd autonomous-text-to-sql-agent
+```
 
+### 2. Virtual environment
 
-2. Set up a virtual environment
-
+```bash
 python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+# Windows
+venv\Scripts\activate
+# macOS / Linux
+source venv/bin/activate
+```
 
+### 3. Install dependencies
 
-3. Install dependencies
-
+```bash
 pip install -r requirements.txt
+```
 
+### 4. Configure environment variables
 
-4. Configure Environment Variables
+Copy `.env.example` to `.env` and fill in credentials:
 
-Create a .env file in the root directory and add your credentials:
-
+```bash
 # Groq API Configuration
 GROQ_API_KEY=your_groq_api_key_here
 
@@ -86,28 +72,69 @@ GROQ_API_KEY=your_groq_api_key_here
 SECRET_KEY=your_django_secret_key
 DEBUG=True
 
-# Read-Only Database Target Credentials (The DB you want to query)
+# Read-Only Database Target Credentials
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=your_target_database
 DB_USER=your_read_only_user
 DB_PASSWORD=your_read_only_password
+```
 
+Use a MySQL user that has **SELECT-only** privileges on the target database.
 
-5. Run the application
+### 5. Run the application
 
+```bash
 python manage.py migrate
 python manage.py runserver
+```
 
+## API
 
-🔒 Security Note
+### Health
 
-This application is designed to be highly secure. However, it is strongly recommended that the database credentials provided in the .env file are strictly mapped to a user role with READ-ONLY (SELECT) privileges on the target database at the database engine level, acting as a final failsafe alongside the sqlparse AST validation.
+```bash
+GET /api/health/
+```
 
-🤝 Contributing
+### Live schema
 
-Contributions, issues, and feature requests are welcome! Feel free to check the issues page.
+```bash
+GET /api/schema/
+```
 
-📝 License
+### Natural-language query
+
+```bash
+POST /api/query/
+Content-Type: application/json
+
+{
+  "question": "Who are the top 3 highest paid employees in the IT department?"
+}
+```
+
+Example response:
+
+```json
+{
+  "question": "Who are the top 3 highest paid employees in the IT department?",
+  "sql": "SELECT name, salary FROM employees WHERE department = 'IT' ORDER BY salary DESC LIMIT 3",
+  "attempts": 1,
+  "repaired": false,
+  "repairs": [],
+  "row_count": 3,
+  "columns": ["name", "salary"],
+  "data": [
+    {"name": "Ada", "salary": 180000}
+  ]
+}
+```
+
+## Security Note
+
+Map `.env` database credentials to a MySQL role with **READ-ONLY (SELECT)** privileges. That engine-level restriction is the final failsafe alongside sqlparse AST validation.
+
+## License
 
 This project is licensed under the MIT License.
